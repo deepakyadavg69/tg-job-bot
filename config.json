@@ -44,7 +44,7 @@
     {
       "channel": "bihar",
       "src": "BSSC",
-      "url": "https://bssc.bihar.gov.in/"
+      "url": "https://bssc.bihar.gov.in/NoticeBoard.htm"
     },
     {
       "channel": "bihar",
@@ -55,26 +55,16 @@
       "channel": "bihar",
       "src": "BPSSC",
       "url": "https://bpssc.bihar.gov.in/"
-    },
-    {
-      "channel": "rrb",
-      "src": "RRB Patna",
-      "url": "https://www.rrbpatna.gov.in/"
-    },
-    {
-      "channel": "rrb",
-      "src": "RRB Chandigarh",
-      "url": "https://www.rrbcdg.gov.in/"
-    },
-    {
-      "channel": "army",
-      "src": "Join Indian Army",
-      "url": "https://joinindianarmy.nic.in/"
-    },
-    {
-      "channel": "army",
-      "src": "Agniveer Vayu",
-      "url": "https://agnipathvayu.cdac.in/"
     }
+  ],
+  "ai_watch": {
+    "rrb": "RRB (Railway Recruitment Boards, rrbapply.gov.in, rrbcdg.gov.in and other rrb*.gov.in) and RRC (Railway Recruitment Cells) notifications, CEN advertisements, admit cards, results, answer keys, exam dates for NTPC, Group D, ALP, JE, Technician, RPF, Section Controller",
+    "army": "Indian Army Agniveer (joinindianarmy.nic.in), Navy Agniveer/SSR/MR (joinindiannavy.gov.in, agniveernavy.cdac.in), Air Force Agniveervayu (agnipathvayu.cdac.in), Coast Guard, CAPF/BSF/CRPF/CISF/ITBP/SSB/Assam Rifles constable, UPSC NDA/CDS/CAPF notifications, admit cards and results",
+    "bihar": "Bihar government recruitment from bodies OTHER than BPSC, BSSC, CSBC and BPSSC: BCECEB, State Health Society Bihar (SHSB), Bihar Vidhan Sabha / Vidhan Parishad, Patna High Court, Bihar civil courts, BSEB, Bihar Jeevika, Bihar police other units"
+  },
+  "official_domains": [
+    "gov.in",
+    "nic.in",
+    "cdac.in"
   ]
 }
