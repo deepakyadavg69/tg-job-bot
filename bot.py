@@ -149,7 +149,7 @@ def send_quiz(chat, q):
 
 
 # ---------------- Gemini ----------------
-FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"]
+FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 _MODELS = []
 
 
@@ -172,7 +172,8 @@ def models():
     except Exception as e:
         print("model list failed", str(e)[:120])
     found.sort(reverse=True)
-    best = [n for (v, full), n in found if full][:2] + [n for (v, full), n in found if not full][:1]
+    # lite first: faster and a bigger free quota; full Flash as backup
+    best = [n for (v, full), n in found if not full][:1] + [n for (v, full), n in found if full][:2]
     for n in best + FALLBACK_MODELS:
         if n not in _MODELS:
             _MODELS.append(n)
@@ -184,9 +185,14 @@ START = time.time()
 AI_BUDGET = 14 * 60   # seconds of AI work allowed per run, so a slow API never blocks the bot
 
 
-def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
-    if not GEMINI or time.time() - START > AI_BUDGET:
+QUOTA = {"search": 0, "all": 0}   # 429 counters for this run
+
+
+def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4, nosearch_ok=False):
+    if not GEMINI or time.time() - START > AI_BUDGET or QUOTA["all"] >= 3:
         return ""
+    if search and QUOTA["search"] >= 2:   # search quota used up this run
+        return gemini(prompt, False, pdf, False, temp) if nosearch_ok else ""
     parts = [{"text": prompt}]
     if pdf:
         parts.insert(0, {"inline_data": {"mime_type": "application/pdf", "data": base64.b64encode(pdf).decode()}})
@@ -195,15 +201,20 @@ def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
         body["tools"] = [{"google_search": {}}]
     elif as_json:
         body["generationConfig"]["responseMimeType"] = "application/json"
+    limited = 0
     for model in list(models())[:3]:
         for attempt in range(2):
             try:
                 r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                                   headers={"x-goog-api-key": GEMINI, "Content-Type": "application/json"},
                                   json=body, timeout=(15, 80))
-                if r.status_code == 429 and attempt == 0:
-                    time.sleep(25)
-                    continue
+                if r.status_code == 429:
+                    limited += 1
+                    if attempt == 0 and "quota" not in r.text.lower():
+                        time.sleep(20)
+                        continue
+                    print("gemini 429", model, r.text[:160].replace("\n", " "))
+                    break
                 if r.status_code == 404 and model in _MODELS and len(_MODELS) > 1:
                     _MODELS.remove(model)   # retired model, don't try it again this run
                 j = r.json()
@@ -214,6 +225,10 @@ def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
             except Exception as e:
                 print("gemini failed", model, str(e)[:160], str(locals().get("j", ""))[:200])
             break
+    if limited:
+        QUOTA["search" if search else "all"] += 1
+        if search and nosearch_ok:
+            return gemini(prompt, False, pdf, False, temp)
     return ""
 
 
@@ -422,7 +437,7 @@ def run_alerts(force_watch=False):
         if p["channel"] in chs:
             jobs.append((p["src"], page_items(p)))
     t = now_ist()
-    if GEMINI and (force_watch or (t.hour % 2 == 0 and t.minute < 10)):
+    if GEMINI and (force_watch or (t.hour % 4 == 1 and t.minute < 10)):
         for key, what in CFG.get("ai_watch", {}).items():
             if key in chs:
                 jobs.append(("watch:" + key, watch_items(key, what, st)))
@@ -595,7 +610,7 @@ def run_replies():
                      f"{groups[chat]['focus']}. Answer in short simple Hinglish (max 60 words). Use Google Search for "
                      "dates/facts. If not sure or no official info, say so and suggest the official website. Never invent "
                      "dates, cutoffs or rumours. No links except official .gov.in/.nic.in sites. Plain text only.\n"
-                     f"Post context: {ctx[:800]}\nQuestion: {text[:500]}", search=True, temp=0.2)
+                     f"Post context: {ctx[:800]}\nQuestion: {text[:500]}", search=True, temp=0.2, nosearch_ok=True)
         ans = re.sub(r"[*#`]", "", ans or "").strip()
         if ans:
             tg("sendMessage", {"chat_id": chat, "text": ans[:900], "reply_to_message_id": m.get("message_id"),
