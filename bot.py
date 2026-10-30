@@ -147,7 +147,35 @@ def send_quiz(chat, q):
 
 
 # ---------------- Gemini ----------------
-MODELS = ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash")
+FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"]
+_MODELS = []
+
+
+def models():
+    """Pick the newest available Flash models automatically (Google retires old names often)."""
+    if _MODELS:
+        return _MODELS
+    found = []
+    try:
+        j = requests.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                         headers={"x-goog-api-key": GEMINI}, timeout=30).json()
+        for m in j.get("models", []):
+            name = m.get("name", "").replace("models/", "")
+            if "generateContent" not in m.get("supportedGenerationMethods", []):
+                continue
+            if not re.fullmatch(r"gemini-\d+(\.\d+)?-flash(-lite)?", name):
+                continue
+            ver = float(re.search(r"gemini-(\d+(?:\.\d+)?)", name).group(1))
+            found.append(((ver, "lite" not in name), name))
+    except Exception as e:
+        print("model list failed", str(e)[:120])
+    found.sort(reverse=True)
+    best = [n for (v, full), n in found if full][:2] + [n for (v, full), n in found if not full][:1]
+    for n in best + FALLBACK_MODELS:
+        if n not in _MODELS:
+            _MODELS.append(n)
+    print("gemini models:", _MODELS[:4])
+    return _MODELS
 
 
 def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
@@ -161,7 +189,7 @@ def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
         body["tools"] = [{"google_search": {}}]
     elif as_json:
         body["generationConfig"]["responseMimeType"] = "application/json"
-    for model in MODELS:
+    for model in list(models()):
         for attempt in range(2):
             try:
                 r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -170,6 +198,8 @@ def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
                 if r.status_code == 429 and attempt == 0:
                     time.sleep(25)
                     continue
+                if r.status_code == 404 and model in _MODELS and len(_MODELS) > 1:
+                    _MODELS.remove(model)   # retired model, don't try it again this run
                 j = r.json()
                 cand = j["candidates"][0]
                 txt = "".join(p.get("text", "") for p in cand["content"]["parts"])
