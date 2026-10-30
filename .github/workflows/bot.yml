@@ -21,7 +21,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,7 +42,7 @@ jobs:
           [ "$SCHED" = "0 4 * * *" ] && MODE=cal
           [ "$SCHED" = "0 12 * * *" ] && MODE=roundup
           [ "$SCHED" = "0 16 * * *" ] && MODE=tip
-          python bot.py "$MODE"
+          python -u bot.py "$MODE"
       - name: Save state
         run: |
           git config user.name "tg-bot"
