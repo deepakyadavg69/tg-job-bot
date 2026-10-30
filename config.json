@@ -1,0 +1,80 @@
+{
+  "channels": {
+    "ssc": {
+      "chat_id": "-1003628765738",
+      "name": "SSC Job Alert & Quiz",
+      "tag": "#SSC",
+      "focus": "SSC CGL, CHSL, MTS, GD, CPO, JE, Steno exams",
+      "group_id": "-1004332803898"
+    },
+    "rrb": {
+      "chat_id": "-1004417729069",
+      "name": "RRB Railway Job Alert & Quiz",
+      "tag": "#Railway",
+      "focus": "RRB NTPC, Group D, ALP, JE, RPF exams",
+      "group_id": "-1004445305556"
+    },
+    "bihar": {
+      "chat_id": "-1004366030307",
+      "name": "Bihar Job Alert & Quiz",
+      "tag": "#Bihar",
+      "focus": "BPSC, BSSC, Bihar Police CSBC, Bihar Daroga BPSSC, Bihar teacher exams, Bihar GK",
+      "group_id": "-1004302830292"
+    },
+    "army": {
+      "chat_id": "-1004498811518",
+      "name": "Army Bharti Alert & Quiz",
+      "tag": "#Army",
+      "focus": "Agniveer Army/Navy/Airforce, CAPF, NDA, CDS exams",
+      "group_id": "-1004478294649"
+    }
+  },
+  "ssc_types": [
+    "notice-boards",
+    "results",
+    "admit-card",
+    "answer-key"
+  ],
+  "pages": [
+    {
+      "channel": "bihar",
+      "src": "BPSC",
+      "url": "https://bpsc.bihar.gov.in/"
+    },
+    {
+      "channel": "bihar",
+      "src": "BSSC",
+      "url": "https://bssc.bihar.gov.in/"
+    },
+    {
+      "channel": "bihar",
+      "src": "CSBC",
+      "url": "https://csbc.bihar.gov.in/"
+    },
+    {
+      "channel": "bihar",
+      "src": "BPSSC",
+      "url": "https://bpssc.bihar.gov.in/"
+    },
+    {
+      "channel": "rrb",
+      "src": "RRB Patna",
+      "url": "https://www.rrbpatna.gov.in/"
+    },
+    {
+      "channel": "rrb",
+      "src": "RRB Chandigarh",
+      "url": "https://www.rrbcdg.gov.in/"
+    },
+    {
+      "channel": "army",
+      "src": "Join Indian Army",
+      "url": "https://joinindianarmy.nic.in/"
+    },
+    {
+      "channel": "army",
+      "src": "Agniveer Vayu",
+      "url": "https://agnipathvayu.cdac.in/"
+    }
+  ]
+}
