@@ -15,6 +15,8 @@ Secrets: TELEGRAM_BOT_TOKEN (required), GEMINI_API_KEY (AI features).
 """
 import json, os, re, sys, time, html, hashlib, datetime, urllib.parse, base64
 import requests
+import functools
+print = functools.partial(print, flush=True)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CFG = json.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8"))
@@ -178,8 +180,12 @@ def models():
     return _MODELS
 
 
+START = time.time()
+AI_BUDGET = 14 * 60   # seconds of AI work allowed per run, so a slow API never blocks the bot
+
+
 def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
-    if not GEMINI:
+    if not GEMINI or time.time() - START > AI_BUDGET:
         return ""
     parts = [{"text": prompt}]
     if pdf:
@@ -189,12 +195,12 @@ def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4):
         body["tools"] = [{"google_search": {}}]
     elif as_json:
         body["generationConfig"]["responseMimeType"] = "application/json"
-    for model in list(models()):
+    for model in list(models())[:3]:
         for attempt in range(2):
             try:
                 r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                                   headers={"x-goog-api-key": GEMINI, "Content-Type": "application/json"},
-                                  json=body, timeout=150)
+                                  json=body, timeout=(15, 80))
                 if r.status_code == 429 and attempt == 0:
                     time.sleep(25)
                     continue
