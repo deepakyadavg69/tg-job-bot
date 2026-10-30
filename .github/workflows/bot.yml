@@ -1,0 +1,46 @@
+name: Job Bot 24x7
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+    - cron: "0 2 * * *"
+    - cron: "0 7 * * *"
+    - cron: "25 14 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "alerts / quiz / ca / gk"
+        default: "alerts"
+concurrency:
+  group: tgbot
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q requests
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SCHED: ${{ github.event.schedule }}
+          MODE_IN: ${{ github.event.inputs.mode }}
+        run: |
+          MODE="${MODE_IN:-alerts}"
+          [ "$SCHED" = "0 2 * * *" ] && MODE=ca
+          [ "$SCHED" = "0 7 * * *" ] && MODE=gk
+          [ "$SCHED" = "25 14 * * *" ] && MODE=quiz
+          python bot.py "$MODE"
+      - name: Save state
+        run: |
+          git config user.name "tg-bot"
+          git config user.email "tg-bot@users.noreply.github.com"
+          git add state || true
+          git diff --cached --quiet || (git commit -m "state" && git pull --rebase -q && git push -q)
+          
