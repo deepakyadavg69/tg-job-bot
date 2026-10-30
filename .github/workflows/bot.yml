@@ -5,10 +5,13 @@ on:
     - cron: "0 2 * * *"
     - cron: "0 7 * * *"
     - cron: "25 14 * * *"
+    - cron: "0 4 * * *"
+    - cron: "0 12 * * *"
+    - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
       mode:
-        description: "alerts / quiz / ca / gk"
+        description: "alerts / watch / quiz / ca / gk / cal / roundup / tip / selftest"
         default: "alerts"
 concurrency:
   group: tgbot
@@ -18,7 +21,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,6 +39,9 @@ jobs:
           [ "$SCHED" = "0 2 * * *" ] && MODE=ca
           [ "$SCHED" = "0 7 * * *" ] && MODE=gk
           [ "$SCHED" = "25 14 * * *" ] && MODE=quiz
+          [ "$SCHED" = "0 4 * * *" ] && MODE=cal
+          [ "$SCHED" = "0 12 * * *" ] && MODE=roundup
+          [ "$SCHED" = "0 16 * * *" ] && MODE=tip
           python bot.py "$MODE"
       - name: Save state
         run: |
@@ -43,4 +49,3 @@ jobs:
           git config user.email "tg-bot@users.noreply.github.com"
           git add state || true
           git diff --cached --quiet || (git commit -m "state" && git pull --rebase -q && git push -q)
-          
