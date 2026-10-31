@@ -840,9 +840,9 @@
   "sarkariresultssc",
   "sarkariresultntpc"
  ],
- "update_offset": 989047715,
+ "update_offset": 989047718,
  "fail": {
-  "SarkariResult": 1
+  "SarkariResult": 2
  },
  "last_run_day": "2026-10-31"
 }
