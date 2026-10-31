@@ -57,14 +57,22 @@
       "url": "https://bpssc.bihar.gov.in/"
     }
   ],
-  "ai_watch": {
-    "rrb": "RRB (Railway Recruitment Boards, rrbapply.gov.in, rrbcdg.gov.in and other rrb*.gov.in) and RRC (Railway Recruitment Cells) notifications, CEN advertisements, admit cards, results, answer keys, exam dates for NTPC, Group D, ALP, JE, Technician, RPF, Section Controller",
-    "army": "Indian Army Agniveer (joinindianarmy.nic.in), Navy Agniveer/SSR/MR (joinindiannavy.gov.in, agniveernavy.cdac.in), Air Force Agniveervayu (agnipathvayu.cdac.in), Coast Guard, CAPF/BSF/CRPF/CISF/ITBP/SSB/Assam Rifles constable, UPSC NDA/CDS/CAPF notifications, admit cards and results",
-    "bihar": "Bihar government recruitment from bodies OTHER than BPSC, BSSC, CSBC and BPSSC: BCECEB, State Health Society Bihar (SHSB), Bihar Vidhan Sabha / Vidhan Parishad, Patna High Court, Bihar civil courts, BSEB, Bihar Jeevika, Bihar police other units"
-  },
+  "ai_watch": {},
   "official_domains": [
     "gov.in",
     "nic.in",
     "cdac.in"
+  ],
+  "aggregators": [
+    {
+      "src": "SarkariResult",
+      "url": "https://www.sarkariresult.com/",
+      "host": "sarkariresult.com"
+    },
+    {
+      "src": "SarkariExam",
+      "url": "https://www.sarkariexam.com/",
+      "host": "sarkariexam.com"
+    }
   ]
 }

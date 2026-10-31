@@ -11,7 +11,7 @@ Modes:
   quiz     -> 8 PM main quiz (6 polls with explanation) + answer recap
   tip      -> 9:30 PM study tip or discussion poll
   selftest -> checks every source and Gemini, posts nothing
-Secrets: TELEGRAM_BOT_TOKEN (required), GEMINI_API_KEY (AI features).
+Secrets: TELEGRAM_BOT_TOKEN (required), GEMINI_API_KEY_PAID (main AI key), GEMINI_API_KEY (free backup key).
 """
 import json, os, re, sys, time, html, hashlib, datetime, urllib.parse, base64
 import requests
@@ -148,9 +148,13 @@ def send_quiz(chat, q):
         "explanation": str(q.get("explanation", ""))[:200]})
 
 
-# ---------------- Gemini ----------------
+# ---------------- Gemini (paid key first, free key as backup) ----------------
+KEYS = [k for k in dict.fromkeys([os.environ.get("GEMINI_API_KEY_PAID", "").strip(), GEMINI]) if k]
 FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 _MODELS = []
+START = time.time()
+AI_BUDGET = 14 * 60   # seconds of AI work allowed per run, so a slow API never blocks the bot
+EXHAUSTED = set()     # (key_index, "search"|"plain") that hit quota in this run
 
 
 def models():
@@ -158,41 +162,42 @@ def models():
     if _MODELS:
         return _MODELS
     found = []
-    try:
-        j = requests.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
-                         headers={"x-goog-api-key": GEMINI}, timeout=30).json()
-        for m in j.get("models", []):
-            name = m.get("name", "").replace("models/", "")
-            if "generateContent" not in m.get("supportedGenerationMethods", []):
-                continue
-            if not re.fullmatch(r"gemini-\d+(\.\d+)?-flash(-lite)?", name):
-                continue
-            ver = float(re.search(r"gemini-(\d+(?:\.\d+)?)", name).group(1))
-            found.append(((ver, "lite" not in name), name))
-    except Exception as e:
-        print("model list failed", str(e)[:120])
+    for key in KEYS:
+        try:
+            j = requests.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                             headers={"x-goog-api-key": key}, timeout=30).json()
+            for m in j.get("models", []):
+                name = m.get("name", "").replace("models/", "")
+                if "generateContent" not in m.get("supportedGenerationMethods", []):
+                    continue
+                if not re.fullmatch(r"gemini-\d+(\.\d+)?-flash(-lite)?", name):
+                    continue
+                ver = float(re.search(r"gemini-(\d+(?:\.\d+)?)", name).group(1))
+                found.append(((ver, "lite" not in name), name))
+            if found:
+                break
+        except Exception as e:
+            print("model list failed", str(e)[:120])
     found.sort(reverse=True)
-    # lite first: faster and a bigger free quota; full Flash as backup
+    # lite first: fast and cheap; full Flash as backup
     best = [n for (v, full), n in found if not full][:1] + [n for (v, full), n in found if full][:2]
     for n in best + FALLBACK_MODELS:
         if n not in _MODELS:
             _MODELS.append(n)
-    print("gemini models:", _MODELS[:4])
+    print("gemini models:", _MODELS[:4], "keys:", len(KEYS))
     return _MODELS
 
 
-START = time.time()
-AI_BUDGET = 14 * 60   # seconds of AI work allowed per run, so a slow API never blocks the bot
-
-
-QUOTA = {"search": 0, "all": 0}   # 429 counters for this run
+def _call(key, model, body):
+    return requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                         headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                         json=body, timeout=(15, 80))
 
 
 def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4, nosearch_ok=False):
-    if not GEMINI or time.time() - START > AI_BUDGET or QUOTA["all"] >= 3:
+    if not KEYS or time.time() - START > AI_BUDGET:
         return ""
-    if search and QUOTA["search"] >= 2:   # search quota used up this run
-        return gemini(prompt, False, pdf, False, temp) if nosearch_ok else ""
+    mode = "search" if search else "plain"
     parts = [{"text": prompt}]
     if pdf:
         parts.insert(0, {"inline_data": {"mime_type": "application/pdf", "data": base64.b64encode(pdf).decode()}})
@@ -201,34 +206,34 @@ def gemini(prompt, search=False, pdf=None, as_json=True, temp=0.4, nosearch_ok=F
         body["tools"] = [{"google_search": {}}]
     elif as_json:
         body["generationConfig"]["responseMimeType"] = "application/json"
-    limited = 0
-    for model in list(models())[:3]:
-        for attempt in range(2):
-            try:
-                r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                                  headers={"x-goog-api-key": GEMINI, "Content-Type": "application/json"},
-                                  json=body, timeout=(15, 80))
-                if r.status_code == 429:
-                    limited += 1
-                    if attempt == 0 and "quota" not in r.text.lower():
-                        time.sleep(20)
-                        continue
-                    print("gemini 429", model, r.text[:160].replace("\n", " "))
-                    break
-                if r.status_code == 404 and model in _MODELS and len(_MODELS) > 1:
-                    _MODELS.remove(model)   # retired model, don't try it again this run
-                j = r.json()
-                cand = j["candidates"][0]
-                txt = "".join(p.get("text", "") for p in cand["content"]["parts"])
-                if txt.strip():
-                    return txt
-            except Exception as e:
-                print("gemini failed", model, str(e)[:160], str(locals().get("j", ""))[:200])
-            break
-    if limited:
-        QUOTA["search" if search else "all"] += 1
-        if search and nosearch_ok:
-            return gemini(prompt, False, pdf, False, temp)
+    for ki, key in enumerate(KEYS):
+        if (ki, mode) in EXHAUSTED:
+            continue
+        limited = 0
+        for model in list(models())[:3]:
+            for attempt in range(2):
+                try:
+                    r = _call(key, model, body)
+                    if r.status_code == 429:
+                        if attempt == 0 and "quota" not in r.text.lower():
+                            time.sleep(15)
+                            continue
+                        limited += 1
+                        print("gemini 429 key", ki, model, r.text[:120].replace("\n", " "))
+                        break
+                    if r.status_code == 404 and model in _MODELS and len(_MODELS) > 1:
+                        _MODELS.remove(model)   # retired model, skip it for the rest of the run
+                    j = r.json()
+                    txt = "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"])
+                    if txt.strip():
+                        return txt
+                except Exception as e:
+                    print("gemini failed key", ki, model, str(e)[:160])
+                break
+        if limited >= 2:
+            EXHAUSTED.add((ki, mode))
+    if search and nosearch_ok:
+        return gemini(prompt, False, pdf, False, temp)
     return ""
 
 
@@ -373,6 +378,93 @@ def watch_items(key, what, st):
     return out
 
 
+# ---------------- Aggregator sources (for sites that block foreign servers) ----------------
+CH_RULES = [
+    ("army", r"\b(army|agniveer|agnipath|navy|naval|air ?force|airmen|agniveervayu|coast guard|bsf|crpf|cisf|itbp|ssb\b|"
+             r"assam rifles|nda\b|cds\b|capf|territorial army|tgc|tes\b)"),
+    ("rrb", r"\b(rrb|railway|rrc|ntpc|group d|alp\b|rpf|metro rail|ircon|dfccil)"),
+    ("bihar", r"\b(bihar|bpsc|bssc|csbc|bpssc|bceceb|shsb|patna)"),
+    ("ssc", r"\b(ssc\b|staff selection)"),
+]
+
+
+def classify(title):
+    t = title.lower()
+    if re.search(r"\b(nta|ugc|csir|neet|jee)\b", t):
+        return None
+    for ch, rx in CH_RULES:
+        if re.search(rx, t, re.I):
+            return ch
+    return None
+
+
+def agg_items(a):
+    try:
+        r = requests.get(a["url"], headers=UA, timeout=40)
+        if r.status_code != 200:
+            print("agg bad", a["src"], r.status_code)
+            return None
+        txt = r.text
+    except Exception as e:
+        print("agg fetch failed", a["src"], str(e)[:120])
+        return None
+    host = re.escape(a["host"])
+    out, keys = [], set()
+    for href, label in re.findall(r'<a[^>]+href="(https?://(?:www\.)?' + host + r'/[^"#]+)"[^>]*>(.*?)</a>', txt, re.S):
+        label = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", label))).strip(" -|")
+        label = re.sub(r"\s*[\u2013-]\s*(apply here|out|apply now|click here)$", "", label, flags=re.I)
+        if len(label) < 12 or href.rstrip("/").count("/") < 3:
+            continue
+        ch = classify(label)
+        k = title_key(label)
+        if not ch or k in keys:
+            continue
+        keys.add(k)
+        out.append({"id": f"{a['src']}:" + hashlib.md5(k.encode()).hexdigest()[:12], "title": label[:250],
+                    "src": {"army": "Defence", "rrb": "Railway", "bihar": "Bihar", "ssc": "SSC"}[ch],
+                    "channel": ch, "type": "agg", "pdf": "", "link": href, "file": ""})
+    print("agg", a["src"], len(out))
+    return out
+
+
+def agg_detail(url):
+    """Official links + plain text of the update page."""
+    try:
+        t = requests.get(url, headers=UA, timeout=40).text
+    except Exception as e:
+        print("detail failed", url[:100], str(e)[:100])
+        return [], ""
+    links = []
+    for h in re.findall(r'href="([^"]+)"', t):
+        h = html.unescape(h).strip()
+        if h.startswith("http") and is_official(h) and h not in links:
+            links.append(h)
+    body = re.sub(r"<script.*?</script>|<style.*?</style>", " ", t, flags=re.S | re.I)
+    body = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", body)))
+    i = body.find("Important Dates")
+    return links, body[max(0, i - 300) if i >= 0 else 0:][:7000]
+
+
+AGG_PROMPT = ("Below is text about an Indian govt exam update titled '{title}'. Reply JSON {{\"hi_title\": \"one short "
+              "simple Hindi line saying what this update is (max 18 words)\", \"points\": [\"up to 6 short Hindi points "
+              "with ONLY facts present in the text: total posts, qualification, age limit, fee, apply start/last date, exam "
+              "date\"], \"last_date\": \"YYYY-MM-DD last date to apply if given, else empty\", \"big\": true if new "
+              "recruitment form, result or admit card}}. Write in your own words, never mention any website name.\n\n{text}")
+
+
+def agg_summary(title, text):
+    out = parse_json(gemini(AGG_PROMPT.format(title=title, text=text[:6000])))
+    if isinstance(out, dict):
+        ld = str(out.get("last_date") or "")
+        return {"hi_title": str(out.get("hi_title") or "")[:200],
+                "points": [re.sub(r"(?i)sarkari ?result|sarkariexam|freejobalert", "", str(p)) for p in (out.get("points") or [])][:6],
+                "last_date": ld if re.fullmatch(r"20\d\d-\d\d-\d\d", ld) else "", "big": bool(out.get("big"))}
+    # no AI: pull the last date with a simple pattern
+    m = re.search(r"Last Date[^:]{0,40}:\s*(\d{2})/(\d{2})/(20\d{2})", text)
+    return {"hi_title": "", "points": [], "last_date": f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else "",
+            "big": bool(re.search(r"online form|result|admit card", title, re.I))}
+
+
 # ---------------- Alerts ----------------
 def caption(it, sm):
     ch = CFG["channels"][it["channel"]]
@@ -389,13 +481,13 @@ def caption(it, sm):
     if sm.get("points"):
         lines.append("")
         lines += [f"▪️ {esc(p[:160])}" for p in sm["points"]]
-    if sm.get("last_date"):
+    if sm.get("last_date") and sm["last_date"] >= now_ist().date().isoformat():
         try:
             lines.append(f"\n⏰ Last date: {datetime.date.fromisoformat(sm['last_date']):%d %b %Y}")
         except Exception:
             pass
     host = urllib.parse.urlparse(it["link"]).netloc.replace("www.", "")
-    link = it["link"] if it["type"] == "watch" else f"https://{host}"
+    link = it["link"] if it["type"] in ("watch", "agg") else f"https://{host}"
     lines += ["", f"🔗 Official: {esc(link)}", "➡️ Official PDF/website zaroor padhein. Doubt ho to group me poochhein.",
               "", f"{ch['tag']} {tags}".strip()]
     return "\n".join(lines)
@@ -403,6 +495,16 @@ def caption(it, sm):
 
 def post_item(st, it):
     chat = CFG["channels"][it["channel"]]["chat_id"]
+    if it["type"] == "agg":
+        links, text = agg_detail(it["link"])
+        pdfs = [l for l in links if ".pdf" in l.lower()]
+        if not links:
+            print("no official link, skip", it["title"][:60])
+            return "skip"
+        it["link"] = (pdfs or links)[0]
+        it["pdf"] = pdfs[0] if pdfs else ""
+        it["file"] = it["pdf"].split("/")[-1].split("?")[0] if pdfs else ""
+        it["pre"] = agg_summary(it["title"], text)
     pdf = download_pdf(it["pdf"]) if it.get("pdf") else None
     sm = it.get("pre") or smart_summary(it["title"], pdf if pdf and len(pdf) < 15_000_000 else None)
     cap = caption(it, sm)
@@ -426,21 +528,68 @@ def post_item(st, it):
     return True
 
 
+def health(st, key, ok):
+    """Count failures per source; after ~6 hours of failure open a GitHub issue (you get an email)."""
+    f = st.setdefault("fail", {})
+    if ok:
+        f.pop(key, None)
+        return
+    f[key] = f.get(key, 0) + 1
+    if f[key] == 36:
+        report_issue(f"Source down: {key}", f"Bot could not read {key} for about 6 hours. It keeps retrying; "
+                     "other sources and backups keep working.")
+
+
+def report_issue(title, body):
+    tok, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
+    if not tok or not repo or DRY:
+        print("ISSUE", title)
+        return
+    try:
+        requests.post(f"https://api.github.com/repos/{repo}/issues", timeout=30,
+                      headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"},
+                      json={"title": title, "body": body})
+    except Exception as e:
+        print("issue failed", e)
+
+
 def run_alerts(force_watch=False):
     st = load_state()
     chs = channels()
     posted = 0
     jobs = []
     if "ssc" in chs:
-        jobs.append(("ssc", ssc_items()))
+        items = ssc_items()
+        health(st, "ssc", bool(items))
+        jobs.append(("ssc", items or None))
     for p in CFG["pages"]:
         if p["channel"] in chs:
-            jobs.append((p["src"], page_items(p)))
+            items = page_items(p)
+            health(st, p["src"], bool(items))
+            jobs.append((p["src"], items or None))
+    # aggregators: primary first, the next one only as backup; all keep their seen-lists fresh
+    fail = st.get("fail", {})
+    official_down = {"ssc": fail.get("ssc", 0) >= 6,
+                     "bihar": sum(fail.get(p["src"], 0) >= 6 for p in CFG["pages"] if p["channel"] == "bihar") >= 2}
+    primary_ok = False
+    for n, a in enumerate(CFG.get("aggregators", [])):
+        items = agg_items(a)
+        health(st, a["src"], bool(items))
+        if not items:
+            continue
+        active = not primary_ok
+        primary_ok = True
+        for i in items:
+            # SSC/Bihar have their own official feeds; aggregator posts there only while those are down
+            if not active or (i["channel"] in official_down and not official_down[i["channel"]]) or i["channel"] not in chs:
+                i["mute"] = True
+        jobs.append((a["src"], items))
     t = now_ist()
-    if GEMINI and (force_watch or (t.hour % 4 == 1 and t.minute < 10)):
+    if KEYS and (force_watch or (t.hour % 4 == 1 and t.minute < 10)):
         for key, what in CFG.get("ai_watch", {}).items():
             if key in chs:
                 jobs.append(("watch:" + key, watch_items(key, what, st)))
+    per_ch = {}
     for key, items in jobs:
         if items is None:      # fetch failed; try next run
             continue
@@ -453,15 +602,19 @@ def run_alerts(force_watch=False):
             continue
         new = [i for i in items if i["id"] not in seen]
         for it in reversed(new):  # oldest first
-            if title_key(it["title"]) in st["titles"]:
+            if it.get("mute") or title_key(it["title"]) in st["titles"]:
                 seen.append(it["id"])
                 continue
-            if posted >= MAX_ALERTS_PER_RUN:
-                break
-            if post_item(st, it):
+            if posted >= MAX_ALERTS_PER_RUN or per_ch.get(it["channel"], 0) >= 2:
+                continue   # stays unseen, goes out next run
+            res = post_item(st, it)
+            if res:
                 seen.append(it["id"])
-                posted += 1
-                time.sleep(3)
+                if res is True:
+                    posted += 1
+                    per_ch[it["channel"]] = per_ch.get(it["channel"], 0) + 1
+                    time.sleep(3)
+    st["last_run_day"] = now_ist().date().isoformat()   # daily commit keeps GitHub schedules alive
     save_state(st)
     print("alerts posted", posted)
 
@@ -486,11 +639,25 @@ def get_questions(focus, n, kind, avoid):
     return [q for q in (data or []) if isinstance(q, dict) and "question" in q][:n]
 
 
+def bank_questions(st, key, n):
+    try:
+        bank = json.load(open(os.path.join(ROOT, "quiz_bank.json"), encoding="utf-8"))
+    except Exception:
+        return []
+    pos = st.setdefault("bank_pos", {}).get(key, 0)
+    qs = [bank[(pos + i) % len(bank)] for i in range(min(n, len(bank)))]
+    st["bank_pos"][key] = (pos + n) % len(bank)
+    print("using quiz bank for", key)
+    return qs
+
+
 def run_quiz(kind):
     st = load_state()
     for key, ch in channels().items():
         n = 5 if kind == "ca" else 6
         qs = get_questions(ch["focus"], n, kind, st["quiz_done"])
+        if not qs and kind == "quiz":
+            qs = bank_questions(st, key, n)   # AI down: use the saved question bank
         if not qs:
             print("no questions for", key)
             continue
@@ -585,7 +752,7 @@ def run_tip():
 
 # ---------------- Doubts in discussion groups ----------------
 def run_replies():
-    if not GEMINI:
+    if not KEYS:
         return
     st = load_state()
     j = tg("getUpdates", {"offset": st.get("update_offset", 0), "timeout": 0, "allowed_updates": json.dumps(["message"])})
@@ -630,6 +797,12 @@ def run_selftest():
         its = page_items(p)
         print(p["src"], "items:", None if its is None else len(its), (its or [{}])[0].get("title", "")[:80])
     print("Gemini:", (gemini("Reply JSON {\"ok\": true}") or "FAILED")[:80])
+    print("Gemini search:", (gemini("Using Google Search, what is today's date in India? One line.", search=True,
+                                     as_json=False) or "FAILED")[:120].replace("\n", " "))
+    print("keys usable:", len(KEYS), "exhausted:", sorted(EXHAUSTED))
+    for a in CFG.get("aggregators", []):
+        its = agg_items(a)
+        print(a["src"], "items:", None if its is None else len(its))
     st = load_state()
     for key, what in CFG.get("ai_watch", {}).items():
         its = watch_items(key, what, st)
