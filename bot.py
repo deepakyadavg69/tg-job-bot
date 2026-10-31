@@ -629,11 +629,49 @@ QUIZ_RULES = ("Each item: {\"question\": \"Hindi question with key English term 
               "computed. Facts must be accurate and verifiable; no doubtful or outdated questions. Return only a JSON array.")
 
 
+NEWS_FEEDS = [
+    "https://www.pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
+    "https://www.pib.gov.in/RssMain.aspx?ModId=6&Lang=2&Regid=3",
+    "https://news.google.com/rss/search?q=India+(appointed+OR+scheme+OR+award+OR+launched+OR+exercise+OR+summit)+when:2d"
+    "&hl=en-IN&gl=IN&ceid=IN:en",
+    "https://indianexpress.com/section/india/feed/",
+]
+_NEWS = []
+
+
+def news_digest():
+    """Latest headlines from free feeds (PIB is official). Cached for the run."""
+    if _NEWS:
+        return _NEWS[0]
+    lines = []
+    for u in NEWS_FEEDS:
+        try:
+            x = requests.get(u, headers=UA, timeout=30).content.decode("utf-8", "ignore")
+            for t in re.findall(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", x, re.S)[1:40]:
+                t = re.sub(r"\s+", " ", html.unescape(t)).strip()
+                if len(t) > 25 and t not in lines:
+                    lines.append(t)
+        except Exception as e:
+            print("feed failed", u[:50], str(e)[:80])
+    print("news headlines", len(lines))
+    _NEWS.append("\n".join("- " + l for l in lines[:120]) if len(lines) >= 10 else "")
+    return _NEWS[0]
+
+
 def get_questions(focus, n, kind, avoid):
     if kind == "ca":
-        prompt = (f"Using Google Search, make {n} current-affairs MCQs on important India/world news of the last 3 days "
-                  f"(today is {now_ist():%d %B %Y}) useful for {focus}. " + QUIZ_RULES)
-        data = parse_json(gemini(prompt, search=True, temp=0.3))
+        news = news_digest()
+        if news:   # free: real headlines from news feeds, no paid search needed
+            prompt = (f"Today is {now_ist():%d %B %Y}. From ONLY the news headlines below, make {n} current-affairs MCQs "
+                      f"useful for {focus} (appointments, schemes, awards, defence, sports, reports, places). Every fact "
+                      f"must come from the headlines; skip politics/crime/opinion. " + QUIZ_RULES + "\n\nHEADLINES:\n" + news)
+            data = parse_json(gemini(prompt, temp=0.3))
+        else:
+            data = None
+        if not data:
+            prompt = (f"Using Google Search, make {n} current-affairs MCQs on important India/world news of the last 3 "
+                      f"days (today is {now_ist():%d %B %Y}) useful for {focus}. " + QUIZ_RULES)
+            data = parse_json(gemini(prompt, search=True, temp=0.3))
     else:
         prompt = (f"Make {n} exam-level MCQs for {focus}, previous-year-question style. Mix: 2 static GK "
                   f"(history/polity/geography/economy), 1 science, 1 reasoning, 1 arithmetic maths, 1 Hindi/English or "
