@@ -540,7 +540,12 @@
    "SarkariExam:2354a2dc8e0c",
    "SarkariExam:abb9013bf2b0",
    "SarkariExam:009ef720d3d7",
-   "_seeded"
+   "_seeded",
+   "SarkariExam:f8244c02904b",
+   "SarkariExam:5b96feedc640",
+   "SarkariExam:b9e00d75adc2",
+   "SarkariExam:68664fb4dcb7",
+   "SarkariExam:0a995ad5b4ee"
   ],
   "FreeJobAlert": [
    "FreeJobAlert:e5ba304e1598",
@@ -568,7 +573,11 @@
    "FreeJobAlert:b75c2ab28443",
    "FreeJobAlert:cb74e4961ee4",
    "FreeJobAlert:1540079454ce",
-   "_seeded"
+   "_seeded",
+   "FreeJobAlert:46b0aa5be957",
+   "FreeJobAlert:b84b1f421c07",
+   "FreeJobAlert:0abdb39b7b82",
+   "FreeJobAlert:631f296ea07b"
   ],
   "SarkariResult": [
    "SarkariResult:0a4eeb24ef7b",
@@ -831,7 +840,9 @@
   "sarkariresultssc",
   "sarkariresultntpc"
  ],
- "update_offset": 989047697,
- "fail": {},
+ "update_offset": 989047715,
+ "fail": {
+  "SarkariResult": 1
+ },
  "last_run_day": "2026-10-31"
 }
