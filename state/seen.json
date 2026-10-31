@@ -842,9 +842,9 @@
  ],
  "update_offset": 989047718,
  "fail": {
-  "SarkariResult": 21
+  "SarkariResult": 22
  },
- "last_run_day": "2026-10-31",
+ "last_run_day": "2026-11-01",
  "sched": {
   "ca@07:30": "2026-10-31",
   "capost@08:30": "2026-10-31",
