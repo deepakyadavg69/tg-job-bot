@@ -1,54 +1,77 @@
 name: Job Bot 24x7
+# Runs forever on free GitHub Actions (public repo = unlimited minutes), no outside server or service.
+# "loop" checks every ~10 min for ~5h40m, then starts the next loop itself (workflow_dispatch via GITHUB_TOKEN).
+# The hourly cron is only a backup that restarts the loop if the chain ever breaks.
 on:
   schedule:
-    - cron: "*/10 * * * *"
-    - cron: "0 2 * * *"
-    - cron: "0 7 * * *"
-    - cron: "25 14 * * *"
-    - cron: "0 4 * * *"
-    - cron: "0 12 * * *"
-    - cron: "0 16 * * *"
+    - cron: "7 * * * *"
+    - cron: "37 * * * *"
   workflow_dispatch:
     inputs:
       mode:
-        description: "alerts / watch / quiz / ca / gk / cal / roundup / tip / selftest"
-        default: "alerts"
-concurrency:
-  group: tgbot
-  cancel-in-progress: false
+        description: "loop (24x7) / alerts / quiz / ca / capost / gk / cal / roundup / tip / selftest / tick"
+        default: "loop"
 permissions:
   contents: write
   issues: write
+  actions: write
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # only one loop at a time; a backup cron run just waits in the queue (no minutes used) and is replaced
+    concurrency:
+      group: ${{ (github.event_name == 'schedule' || inputs.mode == 'loop' || inputs.mode == '') && 'tgbot-loop' || 'tgbot-once' }}
+      cancel-in-progress: false
+    timeout-minutes: 355
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MODE: ${{ (github.event_name == 'schedule' || inputs.mode == '') && 'loop' || inputs.mode }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install -q requests
-      - name: Run bot
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_API_KEY_PAID: ${{ secrets.GEMINI_API_KEY_PAID }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SCHED: ${{ github.event.schedule }}
-          MODE_IN: ${{ github.event.inputs.mode }}
+      - name: Save-state helper
         run: |
-          MODE="${MODE_IN:-alerts}"
-          [ "$SCHED" = "0 2 * * *" ] && MODE=ca
-          [ "$SCHED" = "0 7 * * *" ] && MODE=gk
-          [ "$SCHED" = "25 14 * * *" ] && MODE=quiz
-          [ "$SCHED" = "0 4 * * *" ] && MODE=cal
-          [ "$SCHED" = "0 12 * * *" ] && MODE=roundup
-          [ "$SCHED" = "0 16 * * *" ] && MODE=tip
-          python -u bot.py "$MODE"
-      - name: Save state
-        run: |
+          cat > /tmp/save.sh <<'SH'
           git config user.name "tg-bot"
           git config user.email "tg-bot@users.noreply.github.com"
           git add state || true
-          git diff --cached --quiet || (git commit -m "state" && git pull --rebase -q && git push -q)
+          git diff --cached --quiet && exit 0
+          git commit -q -m "state"
+          for i in 1 2 3; do
+            cp state/seen.json /tmp/mine.json
+            if git pull -q --rebase -X theirs && python -c "import json;json.load(open('state/seen.json'))"; then :; else
+              git rebase --abort 2>/dev/null; git fetch -q; git reset -q --hard origin/main
+              cp /tmp/mine.json state/seen.json; git add state; git commit -q -m "state"; fi
+            git push -q && exit 0
+            sleep 5
+          done
+          echo "state push failed"
+          SH
+          chmod +x /tmp/save.sh
+      - name: Run bot
+        run: |
+          if [ "$MODE" != "loop" ]; then
+            python -u bot.py "$MODE"; /tmp/save.sh; exit 0
+          fi
+          END=$((SECONDS + 20400))          # 5h40m, safely under the 6h job limit
+          while [ $SECONDS -lt $END ]; do
+            T0=$SECONDS
+            git pull -q --rebase || { git rebase --abort; git reset -q --hard origin/main; }
+            echo "::group::tick $(TZ=Asia/Kolkata date '+%d %b %H:%M IST')"
+            timeout 25m python -u bot.py tick || echo "tick error (continuing)"
+            /tmp/save.sh || true
+            echo "::endgroup::"
+            LEFT=$((600 - (SECONDS - T0))); [ $LEFT -lt 60 ] && LEFT=60
+            sleep $LEFT
+          done
+      - name: Start next loop
+        if: always() && env.MODE == 'loop'
+        run: |
+          curl -sS -f -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/bot.yml/dispatches" \
+            -d '{"ref":"main","inputs":{"mode":"loop"}}' && echo "next loop started"
