@@ -65,14 +65,19 @@
   ],
   "aggregators": [
     {
-      "src": "SarkariResult",
-      "url": "https://www.sarkariresult.com/",
-      "host": "sarkariresult.com"
-    },
-    {
       "src": "SarkariExam",
       "url": "https://www.sarkariexam.com/",
       "host": "sarkariexam.com"
+    },
+    {
+      "src": "FreeJobAlert",
+      "url": "https://www.freejobalert.com/",
+      "host": "freejobalert.com"
+    },
+    {
+      "src": "SarkariResult",
+      "url": "https://www.sarkariresult.com/",
+      "host": "sarkariresult.com"
     }
   ]
 }

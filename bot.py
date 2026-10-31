@@ -415,6 +415,9 @@ def agg_items(a):
         label = re.sub(r"\s*[\u2013-]\s*(apply here|out|apply now|click here)$", "", label, flags=re.I)
         if len(label) < 12 or href.rstrip("/").count("/") < 3:
             continue
+        if not re.search(r"form|result|admit|answer key|exam|notification|recruitment|vacanc|merit|date|status|"
+                         r"syllabus|cut ?off|\d{3,}", label, re.I):
+            continue   # menu/category links, not an update
         ch = classify(label)
         k = title_key(label)
         if not ch or k in keys:
