@@ -11,7 +11,8 @@ Modes:
   quiz     -> 8 PM main quiz (6 polls with explanation) + answer recap
   tip      -> 9:30 PM study tip or discussion poll
   selftest -> checks every source and Gemini, posts nothing
-Secrets: TELEGRAM_BOT_TOKEN (required), GEMINI_API_KEY_PAID (main AI key), GEMINI_API_KEY (free backup key).
+Secrets: TELEGRAM_BOT_TOKEN (required), GEMINI_API_KEY (free key, main). GEMINI_API_KEY_PAID optional backup only.
+  tick     -> used by the 24x7 loop: runs any daily job that is due (once per day each) + alerts + replies
 """
 import json, os, re, sys, time, html, hashlib, datetime, urllib.parse, base64
 import requests
@@ -102,9 +103,12 @@ def tg(method, data=None, files=None):
     return {}
 
 
-def send_text(chat, text, silent=False):
-    return tg("sendMessage", {"chat_id": chat, "text": text[:4000], "parse_mode": "HTML",
-                              "disable_web_page_preview": "true", "disable_notification": str(silent).lower()})
+def send_text(chat, text, silent=False, buttons=None):
+    d = {"chat_id": chat, "text": text[:4000], "parse_mode": "HTML",
+         "disable_web_page_preview": "true", "disable_notification": str(silent).lower()}
+    if buttons:
+        d["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+    return tg("sendMessage", d)
 
 
 def pin(chat, res):
@@ -125,10 +129,13 @@ def download_pdf(url):
     return None
 
 
-def send_doc(chat, data, caption, filename):
+def send_doc(chat, data, caption, filename, buttons=None):
     if not filename.lower().endswith(".pdf"):
         filename = (filename or "notice")[:50] + ".pdf"
-    return tg("sendDocument", {"chat_id": chat, "caption": caption[:1024], "parse_mode": "HTML"},
+    d = {"chat_id": chat, "caption": caption[:1024], "parse_mode": "HTML"}
+    if buttons:
+        d["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+    return tg("sendDocument", d,
               files={"document": (filename[-60:], data, "application/pdf")})
 
 
@@ -148,8 +155,8 @@ def send_quiz(chat, q):
         "explanation": str(q.get("explanation", ""))[:200]})
 
 
-# ---------------- Gemini (paid key first, free key as backup) ----------------
-KEYS = [k for k in dict.fromkeys([os.environ.get("GEMINI_API_KEY_PAID", "").strip(), GEMINI]) if k]
+# ---------------- Gemini (free key first; paid key only if one is ever added as backup) ----------------
+KEYS = [k for k in dict.fromkeys([GEMINI, os.environ.get("GEMINI_API_KEY_PAID", "").strip()]) if k]
 FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 _MODELS = []
 START = time.time()
@@ -491,9 +498,27 @@ def caption(it, sm):
             pass
     host = urllib.parse.urlparse(it["link"]).netloc.replace("www.", "")
     link = it["link"] if it["type"] in ("watch", "agg") else f"https://{host}"
-    lines += ["", f"🔗 Official: {esc(link)}", "➡️ Official PDF/website zaroor padhein. Doubt ho to group me poochhein.",
+    lines += ["", "👇 Official link neeche button me hai. Apply se pehle notice zaroor padhein.",
               "", f"{ch['tag']} {tags}".strip()]
     return "\n".join(lines)
+
+
+def buttons_for(it):
+    """Inline buttons: notice PDF, official website/apply page, and the discussion group."""
+    row, seen = [], set()
+    host = urllib.parse.urlparse(it.get("link") or it.get("pdf") or "").netloc
+    cands = [("📄 Official Notice", it.get("pdf")), ("📄 Official Notice" if not it.get("pdf") else "🌐 Official Website",
+             it["link"] if it["type"] in ("watch", "agg") else (f"https://{host}" if host else ""))]
+    for extra in it.get("extra_links", [])[:1]:
+        cands.append(("✅ Apply / Login", extra))
+    for label, url in cands:
+        if url and url.startswith("http") and url not in seen:
+            seen.add(url)
+            row.append([{"text": label, "url": url}])
+    g = CFG["channels"][it["channel"]].get("group_link")
+    if g:
+        row.append([{"text": "💬 Doubt? Group me poochho", "url": g}])
+    return row[:4]
 
 
 def post_item(st, it):
@@ -506,15 +531,19 @@ def post_item(st, it):
             return "skip"
         it["link"] = (pdfs or links)[0]
         it["pdf"] = pdfs[0] if pdfs else ""
+        it["extra_links"] = [l for l in links if l not in pdfs and re.search(r"apply|regist|login|candidate|recruit", l, re.I)]
+        if pdfs:
+            it["link"] = next((l for l in links if l not in pdfs), it["link"])
         it["file"] = it["pdf"].split("/")[-1].split("?")[0] if pdfs else ""
         it["pre"] = agg_summary(it["title"], text)
     pdf = download_pdf(it["pdf"]) if it.get("pdf") else None
     sm = it.get("pre") or smart_summary(it["title"], pdf if pdf and len(pdf) < 15_000_000 else None)
     cap = caption(it, sm)
+    btn = buttons_for(it)
     if pdf and len(cap) <= 1024:
-        res = send_doc(chat, pdf, cap, it["file"])
+        res = send_doc(chat, pdf, cap, it["file"], btn)
     else:
-        res = send_text(chat, cap)
+        res = send_text(chat, cap, buttons=btn)
         if pdf and res and res.get("ok"):
             send_doc(chat, pdf, f"📄 {esc(it['title'][:200])}", it["file"])
     if not (res and res.get("ok")):
@@ -673,9 +702,11 @@ def get_questions(focus, n, kind, avoid):
                       f"days (today is {now_ist():%d %B %Y}) useful for {focus}. " + QUIZ_RULES)
             data = parse_json(gemini(prompt, search=True, temp=0.3))
     else:
-        prompt = (f"Make {n} exam-level MCQs for {focus}, previous-year-question style. Mix: 2 static GK "
-                  f"(history/polity/geography/economy), 1 science, 1 reasoning, 1 arithmetic maths, 1 Hindi/English or "
-                  f"exam-specific topic. Avoid these already-asked questions: {' | '.join(avoid[-60:])}. " + QUIZ_RULES)
+        prompt = (f"Make {n} MCQs for {focus} taken from REAL previous year questions (PYQ) of these exams, strictly "
+                  f"inside the official syllabus, nothing out of syllabus. Mix: 2 static GK (history/polity/geography/"
+                  f"economy), 1 science, 1 reasoning, 1 arithmetic maths, 1 Hindi/English or exam-specific topic. At the "
+                  f"end of each explanation add the exam and year like '(SSC CGL 2022)' only if you are sure, else "
+                  f"'(PYQ pattern)'. Avoid these already-asked questions: {' | '.join(avoid[-60:])}. " + QUIZ_RULES)
         data = parse_json(gemini(prompt, temp=0.8))
     return [q for q in (data or []) if isinstance(q, dict) and "question" in q][:n]
 
@@ -733,6 +764,26 @@ def run_gk():
         send_text(ch["chat_id"], "📚 <b>आज के 10 One-Liner GK</b>\n\n" + "\n".join(lines) +
                   f"\n\nSave कर लो, revision में काम आएगा। {ch['tag']}", silent=True)
         time.sleep(3)
+
+
+def run_capost():
+    """Daily current-affairs digest from free feeds (PIB official + news), 8:30 AM and 6:30 PM."""
+    news = news_digest()
+    if not news:
+        return
+    data = parse_json(gemini(
+        f"Today is {now_ist():%d %B %Y}. From ONLY these headlines pick the 8 most exam-useful current affairs for "
+        "SSC/Railway/Bihar/Defence exams (appointments, schemes, awards, defence, sports, reports, summits, firsts). "
+        "Skip politics fights, crime, opinion. JSON array of {\"hi\": \"one clear Hindi line with key English terms, "
+        "max 160 chars, only facts in the headline\"}.\n\nHEADLINES:\n" + news, temp=0.2))
+    items = [str(d.get("hi", "")).strip() for d in (data or []) if isinstance(d, dict) and d.get("hi")][:8]
+    if len(items) < 4:
+        return
+    head = "🌅 <b>सुबह का Current Affairs</b>" if now_ist().hour < 12 else "🌆 <b>शाम का Current Affairs</b>"
+    body = head + f" | {now_ist():%d %b %Y}\n\n" + "\n".join(f"{i}. {esc(t)}" for i, t in enumerate(items, 1))
+    for key, ch in channels().items():
+        send_text(ch["chat_id"], body + f"\n\nरात 8 बजे के Quiz में इनसे सवाल आ सकते हैं। {ch['tag']}", silent=True)
+        time.sleep(2)
 
 
 def run_cal():
@@ -857,12 +908,60 @@ def run_selftest():
             print("admin in", k, (r.get("result") or {}).get("status"))
 
 
+# ---------------- 24x7 loop scheduler ----------------
+# Daily jobs in IST. The loop calls "tick" every ~10 min; each job runs once per day inside its window.
+SCHEDULE = [("ca", "07:30"), ("capost", "08:30"), ("cal", "09:30"), ("gk", "12:30"), ("roundup", "17:30"),
+            ("capost", "18:30"), ("quiz", "19:55"), ("tip", "21:30")]
+WINDOW_MIN = 150   # a job that is more than 2.5 h late is skipped for that day instead of posting very late
+
+
+def due_jobs(st):
+    t = now_ist()
+    today = t.date().isoformat()
+    first = "sched" not in st
+    sch = st.setdefault("sched", {})
+    due = []
+    for mode, hm in SCHEDULE:
+        h, m = map(int, hm.split(":"))
+        at = t.replace(hour=h, minute=m, second=0, microsecond=0)
+        slot = f"{mode}@{hm}"
+        if at <= t and sch.get(slot) != today:
+            sch[slot] = today            # marked before running: a crash means a skip, never a double post
+            if not first and (t - at).total_seconds() <= WINDOW_MIN * 60:
+                due.append(mode)
+    return due
+
+
+def run_tick():
+    st = load_state()
+    due = due_jobs(st)
+    save_state(st)
+    for mode in due:
+        print("daily job:", mode)
+        try:
+            MODES[mode]()
+        except Exception as e:
+            print("daily job failed", mode, repr(e)[:200])
+    try:
+        run_alerts()
+    except Exception as e:
+        print("alerts failed", repr(e)[:200])
+    try:
+        run_replies()
+    except Exception as e:
+        print("replies failed", repr(e)[:200])
+
+
+MODES = {"alerts": lambda: (run_alerts(), run_replies()), "watch": lambda: run_alerts(force_watch=True),
+         "replies": run_replies, "quiz": lambda: run_quiz("quiz"), "ca": lambda: run_quiz("ca"), "gk": run_gk,
+         "capost": run_capost, "cal": run_cal, "roundup": run_roundup, "tip": run_tip, "selftest": run_selftest,
+         "tick": run_tick}
+
+
 if __name__ == "__main__":
     import urllib3
     urllib3.disable_warnings()
     mode = sys.argv[1] if len(sys.argv) > 1 else "alerts"
     if not TOKEN and mode != "selftest":
         sys.exit("TELEGRAM_BOT_TOKEN secret missing")
-    {"alerts": lambda: (run_alerts(), run_replies()), "watch": lambda: run_alerts(force_watch=True),
-     "replies": run_replies, "quiz": lambda: run_quiz("quiz"), "ca": lambda: run_quiz("ca"), "gk": run_gk,
-     "cal": run_cal, "roundup": run_roundup, "tip": run_tip, "selftest": run_selftest}[mode]()
+    MODES[mode]()
