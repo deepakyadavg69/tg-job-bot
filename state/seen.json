@@ -641,7 +641,9 @@
    "SarkariResult:9bd740035602",
    "SarkariResult:a9861d85107a",
    "SarkariResult:969177492359",
-   "_seeded"
+   "_seeded",
+   "SarkariResult:ab789848ae2d",
+   "SarkariResult:d862848463bd"
   ]
  },
  "quiz_done": [
@@ -861,9 +863,7 @@
   "sarkariresultntpc"
  ],
  "update_offset": 989047742,
- "fail": {
-  "SarkariResult": 104
- },
+ "fail": {},
  "last_run_day": "2026-11-01",
  "sched": {
   "ca@07:30": "2026-11-01",
