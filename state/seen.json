@@ -860,14 +860,14 @@
   "sarkariresultssc",
   "sarkariresultntpc"
  ],
- "update_offset": 989047736,
+ "update_offset": 989047739,
  "fail": {
-  "SarkariResult": 72
+  "SarkariResult": 73
  },
  "last_run_day": "2026-11-01",
  "sched": {
   "ca@07:30": "2026-11-01",
-  "capost@08:30": "2026-10-31",
+  "capost@08:30": "2026-11-01",
   "cal@09:30": "2026-10-31",
   "gk@12:30": "2026-10-31",
   "roundup@17:30": "2026-10-31",
